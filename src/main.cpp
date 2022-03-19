@@ -5,15 +5,19 @@
 #include <SdFat.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#define RESTART_ADDR 0xE000ED0C
+#define READ_RESTART() (*(volatile uint32_t *)RESTART_ADDR)
+#define WRITE_RESTART(val) ((*(volatile uint32_t *)RESTART_ADDR) = (val))
 LiquidCrystal_I2C lcd(0x27,16,2); //yeet
 //running/standby status LEDS nonsense
 elapsedMillis LED1micro;
 elapsedMillis LED2micro;
-const int LED1 = 8;
-const int LED2 = 9;
+const int LED1 = 8; //green one
+const int LED2 = 9; //red one
 unsigned long LED1_Interval = 200;
 unsigned long LED2_Interval = 200;
 //SD card logging stuff
+String longAssString="";
 #define SPI_CLOCK SD_SCK_MHZ(50)
 //fuck
 const int ledPin = 13;
@@ -52,8 +56,8 @@ Metro logRate=Metro(1);
 Adafruit_ADS1115 ads;
 float volts0, volts3;
 float logStarttime;
-float cellVolts;
-float timestamp;
+float cellVolts; //
+float timestamp; //test runtime
 //Relay control defs
 #define OPEN 0
 #define CLOSED 1
@@ -66,7 +70,11 @@ int relayPin =32;
 #define RUNNING 1
 int testerState=STARTUP;
 int lastTesterState;
+elapsedMillis restartTimer;
+unsigned long restartTimeout=5000;
 void setup() {
+  lcd.init();                      // initialize the lcd 
+  lcd.backlight();
   pinMode(relayPin,OUTPUT);
   pinMode(33,INPUT_PULLUP);
   pinMode(23,INPUT);
@@ -81,8 +89,13 @@ void setup() {
     //while (1);
   }
   if (!sd.begin(SD_CONFIG)) {
-    sd.initErrorHalt(&Serial);
-     _reboot_Teensyduino_();
+    lcd.clear();
+    lcd.print("SD failed");lcd.setCursor(0,1);lcd.print("Check Serial");
+    sd.initErrorPrint(&Serial);
+    while(digitalRead(33)==1){
+    }
+    lcd.clear();
+    lcd.print("Continued NO SD");
   }
   //check sd card for existing logs
   while (sd.exists(fileName)) {
@@ -97,50 +110,86 @@ void setup() {
     }
   }
   if (!myFile.open(fileName, FILE_WRITE)) {
-    sd.errorHalt("opening new log for write failed");
+    sd.errorPrint("opening new log for write failed");
   }
   myFile.open(fileName);
   //myFile.println(fileName);
   myFile.println("Time,Voltage,Current");
   myFile.close();
-  lcd.init();                      // initialize the lcd 
-  lcd.backlight();
-
+  lcd.clear();
+  lcd.print("Waiting for button press lol");
+  Serial.print("Waiting for button press lol\n");
   while(digitalRead(33)==1){
-    lcd.clear();
-    lcd.print("Waiting for button press lol");
-    Serial.print("Waiting for button press lol\n");
   }
   Serial.println("STARTING LOG");
   testerState=RUNNING;
   logStarttime=millis();
-  digitalWrite(relayPin,testerState);
-  delay(50);
 }
-
+void statusLEDS();  //blinks the mf LEDS
+void delayedRelayClose(float closingTime);//to close relay and start current flow **AFTER** we start logging
+void restartLogger(int testerState);
 void loop() {
   digitalWrite(ledPin,LOW);
   volts0=ads.readADC_Differential_0_1();
   float realVolts=ads.computeVolts(volts0);
-  //float amps = volts0/0.00075;
   float realAmps=realVolts/0.00075;
   float now = millis()-logStarttime;
   float timestamp = now/1000;
   cellVolts = analogRead(23)*3.3/1024;
   char buffer[80];
-  int n = sprintf(buffer,"%f,%f,%f\n",timestamp,cellVolts,realAmps);
+  int n = sprintf(buffer,"%f,%f,%f,%d\n",timestamp,cellVolts,realAmps,digitalRead(relayPin));
   if(logRate.check()==1 && testerState==RUNNING){
   digitalWrite(ledPin, HIGH);
-  myFile.open(fileName,FILE_WRITE);
-  myFile.write(buffer);
-  myFile.close();
+  // myFile.open(fileName,FILE_WRITE);
+  // myFile.write(buffer);
+  // myFile.close();
+  longAssString+=buffer;
   Serial.print(buffer);
   lcd.clear();
   lcd.print(timestamp);
   lcd.setCursor(0,1);
   lcd.print(realAmps);
   }
-  if(testerState==STANDBY){
+  delayedRelayClose(timestamp);
+   if(cellVolts<=0.05 && timestamp>=1 && testerState==RUNNING){
+    char buffer2[80];
+    sprintf(buffer2,"FUSE BLOWN AT %f\n",timestamp);
+    lcd.clear();
+    lcd.print(buffer2);
+    Serial.println(buffer2);
+    myFile.open(fileName,FILE_WRITE);
+    myFile.print(longAssString);
+    myFile.write(buffer2);
+    myFile.write(sizeof(longAssString));
+    myFile.close();
+    lcd.setCursor(0,1);
+    lcd.print(fileName);
+    testerState=STANDBY;
+    restartTimer=0;
+  }else if(digitalRead(33)==0 && timestamp>=10 && testerState==RUNNING){
+    //do not let relay close command happen immediately after
+    //starting the test
+    Serial.println("LOG stopped manually");
+    char buffer2[80];
+    sprintf(buffer2,"LogStopped@ %f\n",timestamp);
+    lcd.clear();
+    lcd.print(buffer2);
+    Serial.println(buffer2);
+    myFile.open(fileName,FILE_WRITE);
+    myFile.print(longAssString);
+    myFile.write(buffer2);
+    myFile.write(sizeof(longAssString));
+    myFile.close();
+    lcd.setCursor(0,1);
+    lcd.print(fileName);
+    testerState=STANDBY;
+    restartTimer=0;
+  }
+  statusLEDS(); 
+  restartLogger(testerState);
+}
+void statusLEDS(){
+    if(testerState==STANDBY){
     if (LED1micro >= LED1_Interval)
   {
     digitalWrite(LED1, !(digitalRead(LED1))); // toggle the LED state
@@ -151,26 +200,20 @@ void loop() {
   {
     digitalWrite(LED2, !(digitalRead(LED2))); // toggle the LED state
     LED2micro = 0;                            // reset the counter to 0 so the counting starts over...
-  }
-  }
-   if(cellVolts<=0.05 && timestamp>=1 && testerState==RUNNING){
-    char buffer2[80];
-    sprintf(buffer2,"FUSE BLOWN AT %f\n",timestamp);
-    lcd.clear();
-    lcd.print(buffer2);
-    Serial.println(buffer2);
-    myFile.open(fileName,FILE_WRITE);
-    myFile.write(buffer2);
-    myFile.close();
-    lcd.setCursor(0,1);
-    lcd.print(fileName);
-    
-    testerState=STANDBY;
-  }else if(digitalRead(33)==0 && timestamp>=1 && testerState==RUNNING){
-    Serial.println("LOG stopped manually");
-    testerState=STANDBY;
-  }
-  if(digitalRead(relayPin)!=testerState){
+  }}
+}
+void delayedRelayClose(float closingTime){
+  if(digitalRead(relayPin)!=testerState && closingTime>.5){
     digitalWrite(relayPin,testerState);
+  }
+}
+void restartLogger(int testerState){
+  if(testerState==STANDBY && restartTimer>=restartTimeout){
+    lcd.clear();
+    lcd.print("RESTARTING");
+    WRITE_RESTART(0x5FA0004);
+  }
+  else if(testerState==RUNNING){
+    restartTimer=0;
   }
 }
