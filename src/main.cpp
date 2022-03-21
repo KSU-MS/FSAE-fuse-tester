@@ -83,10 +83,11 @@ void setup() {
   digitalWrite(relayPin,OPEN);
   // put your setup code here, to run once:
   Serial.begin(115200);
-  ads.setGain(GAIN_FOUR);
+  ads.setGain(GAIN_TWOTHIRDS);
   if (!ads.begin()) {
     Serial.println("Failed to initialize ADS.");
-    //while (1);
+    lcd.print("ADS failed");
+    delay(500); WRITE_RESTART(0x5FA0004);
   }
   if (!sd.begin(SD_CONFIG)) {
     lcd.clear();
@@ -130,7 +131,7 @@ void delayedRelayClose(float closingTime);//to close relay and start current flo
 void restartLogger(int testerState);
 void loop() {
   digitalWrite(ledPin,LOW);
-  volts0=ads.readADC_Differential_0_1();
+  volts0=ads.readADC_Differential_0_3();
   float realVolts=ads.computeVolts(volts0);
   float realAmps=realVolts/0.00075;
   float now = millis()-logStarttime;
