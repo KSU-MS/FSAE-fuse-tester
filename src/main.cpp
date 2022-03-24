@@ -83,12 +83,13 @@ void setup() {
   digitalWrite(relayPin,OPEN);
   // put your setup code here, to run once:
   Serial.begin(115200);
-  ads.setGain(GAIN_TWOTHIRDS);
+  ads.setGain(GAIN_SIXTEEN);
   if (!ads.begin()) {
     Serial.println("Failed to initialize ADS.");
     lcd.print("ADS failed");
     delay(500); WRITE_RESTART(0x5FA0004);
   }
+  ads.setDataRate(RATE_ADS1115_860SPS);
   if (!sd.begin(SD_CONFIG)) {
     lcd.clear();
     lcd.print("SD failed");lcd.setCursor(0,1);lcd.print("Check Serial");
@@ -136,38 +137,46 @@ void loop() {
   float realAmps=realVolts/0.00075;
   float now = millis()-logStarttime;
   float timestamp = now/1000;
-  cellVolts = analogRead(23)*3.3/1024;
+  // cellVolts = analogRead(23)*3.3/1024;
   char buffer[80];
-  int n = sprintf(buffer,"%f,%f,%f,%d\n",timestamp,cellVolts,realAmps,digitalRead(relayPin));
-  if(logRate.check()==1 && testerState==RUNNING){
+  int n = sprintf(buffer,"%f,%f\n",timestamp,realAmps);
+  // if(logRate.check()==1 && testerState==RUNNING){
+if(testerState==RUNNING){
   digitalWrite(ledPin, HIGH);
-  // myFile.open(fileName,FILE_WRITE);
-  // myFile.write(buffer);
-  // myFile.close();
-  longAssString+=buffer;
-  Serial.print(buffer);
-  lcd.clear();
+  myFile.open(fileName,FILE_WRITE);
+  myFile.write(buffer);
+  myFile.close();
+  // longAssString+=buffer;
+  // Serial.print(buffer);
+  // lcd.clear();
+  // lcd.print(timestamp);
+  // lcd.setCursor(0,1);
+  // lcd.print(realAmps);
+  }
+  if(logRate.check()==1 && testerState==RUNNING){
+    lcd.clear();
   lcd.print(timestamp);
   lcd.setCursor(0,1);
   lcd.print(realAmps);
   }
   delayedRelayClose(timestamp);
-   if(cellVolts<=0.05 && timestamp>=1 && testerState==RUNNING){
-    char buffer2[80];
-    sprintf(buffer2,"FUSE BLOWN AT %f\n",timestamp);
-    lcd.clear();
-    lcd.print(buffer2);
-    Serial.println(buffer2);
-    myFile.open(fileName,FILE_WRITE);
-    myFile.print(longAssString);
-    myFile.write(buffer2);
-    myFile.write(sizeof(longAssString));
-    myFile.close();
-    lcd.setCursor(0,1);
-    lcd.print(fileName);
-    testerState=STANDBY;
-    restartTimer=0;
-  }else if(digitalRead(33)==0 && timestamp>=10 && testerState==RUNNING){
+  //  if(cellVolts<=0.05 && timestamp>=1 && testerState==RUNNING){
+  //   char buffer2[80];
+  //   sprintf(buffer2,"FUSE BLOWN AT %f\n",timestamp);
+  //   lcd.clear();
+  //   lcd.print(buffer2);
+  //   Serial.println(buffer2);
+  //   myFile.open(fileName,FILE_WRITE);
+  //   myFile.print(longAssString);
+  //   myFile.write(buffer2);
+  //   myFile.write(sizeof(longAssString));
+  //   myFile.close();
+  //   lcd.setCursor(0,1);
+  //   lcd.print(fileName);
+  //   testerState=STANDBY;
+  //   restartTimer=0;
+  // }else 
+  if(digitalRead(33)==0 && timestamp>=5 && testerState==RUNNING){
     //do not let relay close command happen immediately after
     //starting the test
     Serial.println("LOG stopped manually");
